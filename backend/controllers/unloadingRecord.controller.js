@@ -1174,11 +1174,53 @@ function shouldRunOcrFallback(visionReview = {}, registrationMode = 'unloading')
   return true;
 }
 
-function shouldVerifyDocumentTypeWithOcr(visionReview = {}) {
+function detectLoadingForm90FromText(...texts) {
+  const merged = texts
+    .map((value) => cleanValue(value || ''))
+    .filter(Boolean)
+    .join(' ');
+  if (!merged) return false;
+
+  const normalized = merged
+    .replace(/[إأآ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/\s+/g, ' ');
+
+  return /استمارة\s*نقل\s*90/.test(normalized)
+    || /نقل\s*90/.test(normalized)
+    || /\b90\b/.test(normalized);
+}
+
+function chooseDocumentType({
+  registrationMode = 'unloading',
+  visionDocumentType = '',
+  ocrDocumentType = '',
+  extractedDocumentType = '',
+  visionRawText = '',
+  ocrRawText = '',
+}) {
+  const rawDocumentType = canonicalDocumentType(extractedDocumentType || '');
+  const loading90Hint = registrationMode === 'loading'
+    ? detectLoadingForm90FromText(visionRawText, ocrRawText, extractedDocumentType)
+    : false;
+
+  if (registrationMode === 'loading') {
+    if (loading90Hint) return '90';
+    if (ocrDocumentType === '90') return '90';
+    if (visionDocumentType === '90') return '90';
+    return ocrDocumentType || visionDocumentType || rawDocumentType || extractedDocumentType || '';
+  }
+
+  return visionDocumentType || ocrDocumentType || rawDocumentType || extractedDocumentType || '';
+}
+
+function shouldVerifyDocumentTypeWithOcr(visionReview = {}, registrationMode = 'unloading') {
   if (!visionReview?.success || !visionReview?.fields) return true;
 
   const visionDocumentType = canonicalDocumentType(visionReview.fields.documentType || '');
   if (!visionDocumentType) return true;
+
+  if (registrationMode === 'loading' && visionDocumentType !== '90') return true;
 
   // Vision can confuse the small icon with other stamped shapes.
   // Re-check with OCR when vision reports 68ا, which is the most frequent false positive.
@@ -1232,7 +1274,10 @@ exports.extractUnloadingRecordFromImage = async (req, res) => {
 
     let extracted = createEmptyExtractionResult();
     const visionPrimary = Boolean(useVisionReview && !forceOcr && visionReview?.success);
-    const shouldUseOcr = forceOcr || !visionPrimary || shouldRunOcrFallback(visionReview, registrationMode) || shouldVerifyDocumentTypeWithOcr(visionReview);
+    const shouldUseOcr = forceOcr
+      || !visionPrimary
+      || shouldRunOcrFallback(visionReview, registrationMode)
+      || shouldVerifyDocumentTypeWithOcr(visionReview, registrationMode);
 
     if (shouldUseOcr) {
       const tempDir = await ensureTempDir();
@@ -1264,7 +1309,7 @@ exports.extractUnloadingRecordFromImage = async (req, res) => {
     }
 
     const visionFields = visionReview?.fields || {};
-    const visionRawText = cleanValue(visionReview?.raw || '');
+    const visionRawText = cleanValue(visionReview?.raw || visionFields.rawText || '');
     const ocrRawText = cleanValue(extracted.rawText || '');
     const combinedRawText = ocrRawText || visionRawText;
 
@@ -1307,7 +1352,14 @@ exports.extractUnloadingRecordFromImage = async (req, res) => {
     const documentNumberValue = normalizeDocumentNumber(visionFields.documentNumber || extracted.documentNumber || '');
     const visionDocumentType = canonicalDocumentType(visionFields.documentType || '');
     const ocrDocumentType = canonicalDocumentType(extracted.documentType || '');
-    const documentTypeValue = visionDocumentType || ocrDocumentType || extracted.documentType || '';
+    const documentTypeValue = chooseDocumentType({
+      registrationMode,
+      visionDocumentType,
+      ocrDocumentType,
+      extractedDocumentType: extracted.documentType || '',
+      visionRawText,
+      ocrRawText,
+    });
     const productTypeValue = cleanValue(
       visionFields.productType || extracted.productType || ''
     );
