@@ -136,7 +136,7 @@ function scoreVisionReview(review = {}) {
   return score;
 }
 
-function buildVisionReviewTasks(req = {}) {
+function buildVisionReviewTasks(req = {}, { registrationMode = 'unloading' } = {}) {
   const imageBuffer = req.file?.buffer;
   const mimeType = req.file?.mimetype;
 
@@ -151,7 +151,7 @@ function buildVisionReviewTasks(req = {}) {
     },
     {
       label: 'gemini_document_ai',
-      run: () => runUnloadingGeminiReview({ imageBuffer, mimeType }),
+      run: () => runUnloadingGeminiReview({ imageBuffer, mimeType, registrationMode }),
     },
     {
       label: 'document_ai',
@@ -1223,7 +1223,10 @@ exports.extractUnloadingRecordFromImage = async (req, res) => {
     };
 
     if (useVisionReview && !forceOcr) {
-      const { review } = await runPrioritizedVisionReview(buildVisionReviewTasks(req), { registrationMode });
+      const { review } = await runPrioritizedVisionReview(
+        buildVisionReviewTasks(req, { registrationMode }),
+        { registrationMode }
+      );
       visionReview = review || visionReview;
     }
 

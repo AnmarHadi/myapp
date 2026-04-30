@@ -1,5 +1,3 @@
-// النسخة المحسّنة - Gemini Vision مباشر بدون قوالب
-
 const {
   canonicalVehicleValue,
   sanitizeWarehouseStrictValue,
@@ -11,26 +9,24 @@ const {
   canonicalReceiverEntity,
   sanitizeWarehouseName,
   sanitizeDriverName,
+  cleanValue,
 } = require('./unloadingFieldReader');
 const { isGoldenRefinery, repairBrokenWords } = require('./arabicFuzzy');
 
-const GEMINI_MODEL =
-  process.env.UNLOADING_GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_MODEL = process.env.UNLOADING_GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const CANONICAL_RECEIVER =
-  'معمل مصفى النفط الذهبي لإنتاج الاسفلت المؤكسد';
-const GEMINI_API_BASE =
-  'https://generativelanguage.googleapis.com/v1beta/models';
+  '\u0645\u0639\u0645\u0644 \u0645\u0635\u0641\u0649 \u0627\u0644\u0646\u0641\u0637 \u0627\u0644\u0630\u0647\u0628\u064a \u0644\u0625\u0646\u062a\u0627\u062c \u0627\u0644\u0627\u0633\u0641\u0644\u062a \u0627\u0644\u0645\u0624\u0643\u0633\u062f';
 
-// helpers
-function cleanString(v = '') {
-  return String(v || '').replace(/\s+/g, ' ').trim();
+function cleanString(value = '') {
+  return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
-function clamp01(v, fallback = 0) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return fallback;
-  if (n > 1.0001) return Math.max(0, Math.min(1, n / 100));
-  return Math.max(0, Math.min(1, n));
+function clamp01(value, fallback = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  if (number > 1.0001) return Math.max(0, Math.min(1, number / 100));
+  return Math.max(0, Math.min(1, number));
 }
 
 function parseJsonSafe(text = '') {
@@ -38,26 +34,27 @@ function parseJsonSafe(text = '') {
   try {
     return JSON.parse(text);
   } catch (_) {
-    // Continue with best-effort JSON extraction below.
+    // Some model responses wrap JSON in prose; recover the first object.
   }
-  const s = text.indexOf('{');
-  const e = text.lastIndexOf('}');
-  if (s >= 0 && e > s) {
+
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start >= 0 && end > start) {
     try {
-      return JSON.parse(text.slice(s, e + 1));
+      return JSON.parse(text.slice(start, end + 1));
     } catch (_) {
-      // Ignore malformed model output.
+      return null;
     }
   }
   return null;
 }
 
 function extractFirstJson(payload = {}) {
-  for (const c of payload.candidates || []) {
-    for (const p of c?.content?.parts || []) {
-      if (typeof p?.text === 'string') {
-        const r = parseJsonSafe(p.text);
-        if (r) return r;
+  for (const candidate of payload.candidates || []) {
+    for (const part of candidate?.content?.parts || []) {
+      if (typeof part?.text === 'string') {
+        const parsed = parseJsonSafe(part.text);
+        if (parsed) return parsed;
       }
     }
   }
@@ -65,110 +62,113 @@ function extractFirstJson(payload = {}) {
 }
 
 function extractText(payload = {}) {
-  for (const c of payload.candidates || []) {
-    for (const p of c?.content?.parts || []) {
-      if (typeof p?.text === 'string' && p.text.trim()) return p.text.trim();
+  for (const candidate of payload.candidates || []) {
+    for (const part of candidate?.content?.parts || []) {
+      if (typeof part?.text === 'string' && part.text.trim()) {
+        return part.text.trim();
+      }
     }
   }
   return '';
 }
 
-function normalizeQuantity(v = '') {
-  const w = String(v || '').replace(/[\u0660-\u0669]/g,
-    (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d).toString());
-  const nums = (w.match(/\d{3,6}/g) || [])
+function normalizeQuantity(value = '') {
+  const western = String(value || '').replace(/[\u0660-\u0669]/g, (digit) => (
+    '\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669'.indexOf(digit).toString()
+  ));
+  const values = (western.match(/\d{3,6}/g) || [])
     .map(Number)
-    .filter((n) => Number.isFinite(n) && n >= 1000 && n <= 60000);
-  return nums.length ? String(nums.sort((a, b) => b - a)[0]) : '';
+    .filter((item) => Number.isFinite(item) && item >= 1000 && item <= 60000);
+  return values.length ? String(values.sort((a, b) => b - a)[0]) : '';
 }
 
-function normalizeFields(raw = {}) {
-  const receiverRaw = repairBrokenWords(cleanString(raw.receiverEntity || ''));
+function normalizeReceiverEntity(value = '', registrationMode = 'unloading') {
+  const receiverRaw = repairBrokenWords(cleanString(value));
+  if (registrationMode === 'loading') return receiverRaw;
+
+  return isGoldenRefinery(receiverRaw)
+    ? (canonicalReceiverEntity(receiverRaw, '') || CANONICAL_RECEIVER)
+    : receiverRaw;
+}
+
+function normalizeFields(raw = {}, registrationMode = 'unloading') {
   return {
-    documentNumber:
-      normalizeDocumentNumber(raw.documentNumber || '') || '',
-    documentType:
-      canonicalDocumentType(raw.documentType || '') || '',
-    issueDate:
-      normalizeDateValue(raw.issueDate || '') || '',
+    documentNumber: normalizeDocumentNumber(raw.documentNumber || '') || '',
+    documentType: canonicalDocumentType(raw.documentType || '') || '',
+    issueDate: normalizeDateValue(raw.issueDate || '') || '',
     loadingWarehouseName: sanitizeWarehouseName(
       sanitizeWarehouseStrictValue(raw.loadingWarehouseName || '')
     ),
-    receiverEntity: isGoldenRefinery(receiverRaw)
-      ? (canonicalReceiverEntity(receiverRaw, '') || CANONICAL_RECEIVER)
-      : receiverRaw,
+    receiverEntity: normalizeReceiverEntity(raw.receiverEntity || '', registrationMode),
     vehicleNumber: canonicalVehicleValue(raw.vehicleNumber || ''),
     driverName: sanitizeDriverName(raw.driverName || ''),
-    suppliedQuantityLiters: normalizeQuantity(
-      raw.suppliedQuantityLiters || ''
-    ),
+    productType: cleanValue(raw.productType || ''),
+    suppliedQuantityLiters: normalizeQuantity(raw.suppliedQuantityLiters || ''),
     rawText: cleanString(raw.rawText || ''),
     fieldConfidence: {
       documentNumber: clamp01(raw.fieldConfidence?.documentNumber, 0.6),
       documentType: clamp01(raw.fieldConfidence?.documentType, 0.6),
       issueDate: clamp01(raw.fieldConfidence?.issueDate, 0.6),
-      loadingWarehouseName: clamp01(
-        raw.fieldConfidence?.loadingWarehouseName,
-        0.6
-      ),
+      loadingWarehouseName: clamp01(raw.fieldConfidence?.loadingWarehouseName, 0.6),
       receiverEntity: clamp01(raw.fieldConfidence?.receiverEntity, 0.6),
       vehicleNumber: clamp01(raw.fieldConfidence?.vehicleNumber, 0.6),
       driverName: clamp01(raw.fieldConfidence?.driverName, 0.55),
-      suppliedQuantityLiters: clamp01(
-        raw.fieldConfidence?.suppliedQuantityLiters,
-        0.6
-      ),
+      productType: clamp01(raw.fieldConfidence?.productType, 0.55),
+      suppliedQuantityLiters: clamp01(raw.fieldConfidence?.suppliedQuantityLiters, 0.6),
     },
   };
 }
 
-function buildScore(f = {}) {
-  let s = 0;
-  if (f.documentNumber) s += 6;
-  if (f.documentType) s += 5;
-  if (f.issueDate) s += 4;
-  if (f.loadingWarehouseName) s += 5;
-  if (f.receiverEntity) s += 6;
-  if (f.vehicleNumber) s += 6;
-  if (f.driverName) s += 4;
-  if (f.suppliedQuantityLiters) s += 2;
-  s += Object.values(f.fieldConfidence || {}).reduce(
-    (acc, v) => acc + clamp01(v, 0),
+function buildScore(fields = {}, registrationMode = 'unloading') {
+  let score = 0;
+  if (fields.documentNumber) score += 6;
+  if (fields.documentType) score += 5;
+  if (fields.issueDate) score += 4;
+  if (fields.loadingWarehouseName) score += 5;
+  if (fields.receiverEntity) score += 6;
+  if (fields.vehicleNumber) score += 6;
+  if (fields.driverName) score += 4;
+  if (registrationMode === 'loading' && fields.productType) score += 4;
+  if (fields.suppliedQuantityLiters) score += 2;
+  score += Object.values(fields.fieldConfidence || {}).reduce(
+    (sum, value) => sum + clamp01(value, 0),
     0
   );
-  return Number(s.toFixed(3));
+  return Number(score.toFixed(3));
 }
 
 function buildJsonSchema() {
-  const strProp = { type: 'string' };
-  const numProp = { type: 'number' };
-  const confProps = {
-    documentNumber: numProp,
-    documentType: numProp,
-    issueDate: numProp,
-    loadingWarehouseName: numProp,
-    receiverEntity: numProp,
-    vehicleNumber: numProp,
-    driverName: numProp,
-    suppliedQuantityLiters: numProp,
+  const stringProp = { type: 'STRING' };
+  const numberProp = { type: 'NUMBER' };
+  const confidenceProperties = {
+    documentNumber: numberProp,
+    documentType: numberProp,
+    issueDate: numberProp,
+    loadingWarehouseName: numberProp,
+    receiverEntity: numberProp,
+    vehicleNumber: numberProp,
+    driverName: numberProp,
+    productType: numberProp,
+    suppliedQuantityLiters: numberProp,
   };
 
   return {
-    type: 'object',
+    type: 'OBJECT',
     properties: {
-      documentNumber: strProp,
-      documentType: strProp,
-      issueDate: strProp,
-      loadingWarehouseName: strProp,
-      receiverEntity: strProp,
-      vehicleNumber: strProp,
-      driverName: strProp,
-      suppliedQuantityLiters: strProp,
-      rawText: strProp,
+      documentNumber: stringProp,
+      documentType: stringProp,
+      issueDate: stringProp,
+      loadingWarehouseName: stringProp,
+      receiverEntity: stringProp,
+      vehicleNumber: stringProp,
+      driverName: stringProp,
+      productType: stringProp,
+      suppliedQuantityLiters: stringProp,
+      rawText: stringProp,
       fieldConfidence: {
-        type: 'object',
-        properties: confProps,
-        required: Object.keys(confProps),
+        type: 'OBJECT',
+        properties: confidenceProperties,
+        required: Object.keys(confidenceProperties),
       },
     },
     required: [
@@ -179,6 +179,7 @@ function buildJsonSchema() {
       'receiverEntity',
       'vehicleNumber',
       'driverName',
+      'productType',
       'suppliedQuantityLiters',
       'rawText',
       'fieldConfidence',
@@ -186,69 +187,122 @@ function buildJsonSchema() {
   };
 }
 
-// المرحلة 1: استخراج النص الخام
-async function extractRawText({ imageBuffer, mimeType, apiKey }) {
-  const url = `${GEMINI_API_BASE}/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const body = {
-    system_instruction: {
-      parts: [{
-        text: 'أنت محلل وثائق عراقية متخصص في مستندات نفط OPDC. مهمتك استخراج النص بدقة تامة مع الحفاظ على الأرقام والأسماء.',
-      }],
-    },
-    contents: [{
-      role: 'user',
-      parts: [
-        {
-          text: `اقرأ هذا المستند العراقي بعناية واستخرج كل النصوص المرئية كما هي بالضبط.
-- الأرقام: اكتبها بالأرقام الإنجليزية كما تظهر.
-- النصوص العربية: احتفظ بها كاملة.
-- رقم المستند: يبدأ بـ A ثم أرقام (مثال: A28193322) موجود عادةً تحت شعار OPDC.
-- رقم السيارة: مثل 17668/21B أو 10464/أ نجف.
-- الشكل الهندسي قرب QR (خماسي/دائري/رباعي/سداسي) يحدد نوع الوثيقة.
-أعد النص كاملاً منسقاً وواضحاً.`,
-        },
-        {
-          inline_data: {
-            mime_type: mimeType || 'image/jpeg',
-            data: imageBuffer.toString('base64'),
-          },
-        },
-      ],
-    }],
-    generationConfig: { temperature: 0 },
-  };
+function buildRawTextPrompt(registrationMode = 'unloading') {
+  if (registrationMode === 'loading') {
+    return `Read this Iraqi OPDC loading document image and transcribe all visible text accurately.
+Keep Arabic names exactly as written and convert Arabic-Indic digits to English digits.
+Important loading-document clues:
+- The document number is usually near the top-left and may start with E, for example E0041474.
+- The document may say "استمارة نقل 90" or "مستند تحميل منتجات معامل".
+- Read the upper information table, the product table, vehicle number, driver name, quantity, and loading date.
+- Preserve the raw wording for warehouse/source and receiver/destination.`;
+  }
 
-  const res = await fetch(url, {
+  return `Read this Iraqi OPDC unloading document image and transcribe all visible text accurately.
+Keep Arabic names exactly as written and convert Arabic-Indic digits to English digits.
+Important unloading-document clues:
+- The document number is usually under the OPDC logo and may start with A, for example A28193322.
+- The geometric shape near QR/logo can identify document type 68ا, 68ب, 68ج, or 126 تصديري.
+- Read the upper information table, vehicle number, driver name, quantity, and issue date.`;
+}
+
+function buildFieldPrompt(rawText = '', registrationMode = 'unloading') {
+  if (registrationMode === 'loading') {
+    return `Extract structured fields from this Iraqi OPDC LOADING document.
+
+Raw text:
+${rawText}
+
+Return JSON only. Field rules:
+- documentNumber: top-left document number, usually one English letter plus 7 or 8 digits, for example E0041474.
+- documentType: use "90" if the document says "استمارة نقل 90"; otherwise use the visible canonical document type if present.
+- issueDate: use the loading date / "وقت وتاريخ التحميل" as YYYY-MM-DD when no separate issue date exists.
+- loadingWarehouseName: the source/seller/factory in the upper right table, for example "شركة الشبكة النفطية".
+- receiverEntity: the destination/customer/recipient in the upper table, for example "البصرة / خور الزبير".
+- vehicleNumber: exact visible vehicle number, for example "11H 12179" or "17668/21B".
+- driverName: driver name from the "اسم السائق" row in the upper vehicle information table. Do not use supervisor, stamp, signature, or employee names.
+- productType: value under "نوع المنتوج", for example "اسفلت مؤكسد 60/70".
+- suppliedQuantityLiters: numeric loaded quantity in liters from the product table, for example 32060.
+- rawText: the complete useful text from the image.
+- fieldConfidence: confidence for each field from 0 to 1.`;
+  }
+
+  return `Extract structured fields from this Iraqi OPDC UNLOADING document.
+
+Raw text:
+${rawText}
+
+Return JSON only. Field rules:
+- documentNumber: document number, usually A plus 8 digits, for example A28193322.
+- documentType: exactly one of "68ا", "68ب", "68ج", or "126 تصديري" when visible.
+- issueDate: issue date as YYYY-MM-DD.
+- loadingWarehouseName: supplier/source from the upper table only.
+- receiverEntity: recipient/destination from the upper table only.
+- vehicleNumber: exact visible vehicle number.
+- driverName: driver name only; do not use supervisor, stamp, signature, or employee names.
+- productType: return an empty string if no product type is visible.
+- suppliedQuantityLiters: numeric quantity in liters from the product table.
+- rawText: the complete useful text from the image.
+- fieldConfidence: confidence for each field from 0 to 1.`;
+}
+
+async function postGemini({ apiKey, body }) {
+  const url = `${GEMINI_API_BASE}/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Gemini pass1 failed: ${res.status}`);
-  return extractText(await res.json());
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`${response.status}${text ? ` ${text}` : ''}`);
+  }
+
+  return response.json();
 }
 
-// المرحلة 2: استخراج الحقول المنظمة من النص
-async function extractFieldsFromText({ rawText, imageBuffer, mimeType, apiKey }) {
-  const url = `${GEMINI_API_BASE}/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const prompt = `بناءً على النص المستخرج التالي من مستند تفريغ عراقي، استخرج الحقول المطلوبة بدقة.
+async function extractRawText({
+  imageBuffer,
+  mimeType,
+  apiKey,
+  registrationMode = 'unloading',
+}) {
+  const payload = await postGemini({
+    apiKey,
+    body: {
+      systemInstruction: {
+        parts: [{
+          text: 'You are an expert OCR and vision reader for Iraqi OPDC oil documents. Preserve numbers, Arabic names, and table relationships.',
+        }],
+      },
+      contents: [{
+        role: 'user',
+        parts: [
+          { text: buildRawTextPrompt(registrationMode) },
+          {
+            inline_data: {
+              mime_type: mimeType || 'image/jpeg',
+              data: imageBuffer.toString('base64'),
+            },
+          },
+        ],
+      }],
+      generationConfig: { temperature: 0 },
+    },
+  });
 
-=== النص المستخرج ===
-${rawText}
-=== نهاية النص ===
+  return extractText(payload);
+}
 
-قواعد دقيقة لكل حقل:
-• documentNumber: رقم يبدأ بـ A ثم 8 أرقام مثل "A28193322". موجود تحت شعار OPDC. لا تتركه فارغاً إذا ظهر.
-• documentType: واحد فقط من هذه القيم: "68ا" (شكل خماسي) | "68ب" (شكل دائري) | "68ج" (شكل رباعي) | "126 تصديري" (شكل سداسي). اقرأه من الشكل الهندسي قرب رمز QR أو الشعار.
-• issueDate: تاريخ الإصدار بصيغة YYYY-MM-DD فقط.
-• loadingWarehouseName: الجهة المجهزة من الجدول العلوي الأيمن فقط (المصدر/المورد).
-• receiverEntity: الجهة المستلمة/المرسل إليها من الجدول العلوي الأيمن (المستهلك).
-• vehicleNumber: رقم السيارة كما هو مكتوب (مثل "17668/21B" أو "10464/أ نجف"). لا تتغير الأحرف.
-• driverName: اسم السائق من سطر "اسم السائق" أسفل المستند فقط. لا تأخذ اسم موظف التجهيز.
-• suppliedQuantityLiters: كمية "طبيعي (لتر)" من الجدول الأوسط بالأرقام الإنجليزية.
-• rawText: النص الكامل المستخرج أعلاه.
-• fieldConfidence: ثقتك في كل حقل من 0 إلى 1.`;
-
-  const parts = [{ text: prompt }];
+async function extractFieldsFromText({
+  rawText,
+  imageBuffer,
+  mimeType,
+  apiKey,
+  registrationMode = 'unloading',
+}) {
+  const parts = [{ text: buildFieldPrompt(rawText, registrationMode) }];
   if (imageBuffer) {
     parts.push({
       inline_data: {
@@ -258,36 +312,37 @@ ${rawText}
     });
   }
 
-  const body = {
-    system_instruction: {
-      parts: [{
-        text: 'أنت محلل وثائق نفطية عراقية خبير. أعد JSON فقط بدون أي نص إضافي.',
-      }],
+  const payload = await postGemini({
+    apiKey,
+    body: {
+      systemInstruction: {
+        parts: [{
+          text: 'You extract Iraqi oil document fields. Return valid JSON only and never add prose.',
+        }],
+      },
+      contents: [{ role: 'user', parts }],
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: 'application/json',
+        responseSchema: buildJsonSchema(),
+      },
     },
-    contents: [{ role: 'user', parts }],
-    generationConfig: {
-      temperature: 0,
-      responseMimeType: 'application/json',
-      responseJsonSchema: buildJsonSchema(),
-    },
-  };
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Gemini pass2 failed: ${res.status}`);
-  return extractFirstJson(await res.json());
+
+  return extractFirstJson(payload);
 }
 
-async function runUnloadingGeminiReview({ imageBuffer, mimeType }) {
+async function runUnloadingGeminiReview({
+  imageBuffer,
+  mimeType,
+  registrationMode = 'unloading',
+}) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return {
       available: false,
       success: false,
-      message: 'GEMINI_API_KEY غير موجود',
+      message: 'GEMINI_API_KEY is missing',
       fields: {},
       attempts: [],
       topCandidates: {},
@@ -299,11 +354,16 @@ async function runUnloadingGeminiReview({ imageBuffer, mimeType }) {
 
   let rawText = '';
   try {
-    rawText = await extractRawText({ imageBuffer, mimeType, apiKey });
-  } catch (err) {
+    rawText = await extractRawText({
+      imageBuffer,
+      mimeType,
+      apiKey,
+      registrationMode,
+    });
+  } catch (error) {
     console.warn(
       '[GeminiExtractor] pass1 failed, falling back to pass2 only:',
-      err.message
+      error.message
     );
   }
 
@@ -314,12 +374,13 @@ async function runUnloadingGeminiReview({ imageBuffer, mimeType }) {
       imageBuffer,
       mimeType,
       apiKey,
+      registrationMode,
     });
-  } catch (err) {
+  } catch (error) {
     return {
       available: true,
       success: false,
-      message: `فشل استخراج الحقول: ${err.message}`,
+      message: `Gemini field extraction failed: ${error.message}`,
       fields: {},
       attempts: [],
       topCandidates: {},
@@ -333,7 +394,7 @@ async function runUnloadingGeminiReview({ imageBuffer, mimeType }) {
     return {
       available: true,
       success: false,
-      message: 'تعذر تفسير استجابة Gemini',
+      message: 'Could not parse Gemini response',
       fields: {},
       attempts: [],
       topCandidates: {},
@@ -346,8 +407,8 @@ async function runUnloadingGeminiReview({ imageBuffer, mimeType }) {
   if (!rawText && parsed.rawText) rawText = parsed.rawText;
   parsed.rawText = rawText || parsed.rawText || '';
 
-  const fields = normalizeFields(parsed);
-  const score = buildScore(fields);
+  const fields = normalizeFields(parsed, registrationMode);
+  const score = buildScore(fields, registrationMode);
 
   if (score < 20 && rawText) {
     try {
@@ -356,11 +417,12 @@ async function runUnloadingGeminiReview({ imageBuffer, mimeType }) {
         imageBuffer: null,
         mimeType,
         apiKey,
+        registrationMode,
       });
       if (retryParsed) {
         retryParsed.rawText = rawText;
-        const retryFields = normalizeFields(retryParsed);
-        const retryScore = buildScore(retryFields);
+        const retryFields = normalizeFields(retryParsed, registrationMode);
+        const retryScore = buildScore(retryFields, registrationMode);
         if (retryScore > score) {
           return {
             available: true,
@@ -380,7 +442,7 @@ async function runUnloadingGeminiReview({ imageBuffer, mimeType }) {
         }
       }
     } catch (_) {
-      // Continue with the first successful result.
+      // Keep the first successful structured result.
     }
   }
 
