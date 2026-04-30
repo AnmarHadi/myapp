@@ -1,0 +1,6 @@
+{
+  "templateName": "unloading-68a-template",
+  "documentKind": "unloading",
+  "documentTypeCode": "68a",
+  "extendsTemplateName": "loading-90-template"
+}

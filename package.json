@@ -1,0 +1,11 @@
+{
+  "name": "myapp-root",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "node scripts/start-all.js",
+    "start": "node scripts/start-all.js",
+    "dev:backend": "npm --prefix backend start",
+    "dev:frontend": "npm --prefix frontend run dev -- --host 127.0.0.1"
+  }
+}

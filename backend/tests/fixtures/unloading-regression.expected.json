@@ -1,0 +1,33 @@
+{
+  "cases": [
+    {
+      "name": "doc-29",
+      "image": "29.jpg",
+      "required": true,
+      "expected": {
+        "vehicleNumber": "22E12690",
+        "driverName": "صفاء محمد كاظم ثىدر",
+        "loadingWarehouseName": "مصفى السماوة"
+      }
+    },
+    {
+      "name": "doc-30",
+      "image": "30.jpg",
+      "required": true,
+      "expected": {
+        "vehicleNumber": "22J17981",
+        "driverName": "عباس شهيد كاظم النجفي",
+        "loadingWarehouseName": "مصفى الناصرية"
+      }
+    },
+    {
+      "name": "doc-31",
+      "image": "31.jpg",
+      "required": false,
+      "expected": {
+        "vehicleNumber": "22E410464",
+        "driverName": "محمد كاظم شذر الجاسمي"
+      }
+    }
+  ]
+}
