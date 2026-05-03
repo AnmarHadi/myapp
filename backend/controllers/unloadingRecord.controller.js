@@ -1241,6 +1241,12 @@ exports.extractUnloadingRecordFromImage = async (req, res) => {
     }
 
     const registrationMode = getRegistrationMode(req);
+    if (registrationMode === 'loading') {
+      return res.status(400).json({
+        success: false,
+        message: 'Loading document extraction is disabled. Manual entry only.',
+      });
+    }
     const requestedOcrMode = typeof req.body?.ocrMode === 'string' ? req.body.ocrMode.trim() : '';
     const forceOcr = ['1', 'true', 'yes'].includes(String(req.body?.forceOcr || '').toLowerCase());
     const ocrMode = requestedOcrMode || 'default';
@@ -1482,7 +1488,7 @@ exports.extractUnloadingRecordFromImage = async (req, res) => {
       ? await matchLoadingReceiverEntity(extractedData.receiverEntity || preferredReceiverRaw)
       : null;
     const receiverDestinationCandidate = loadingReceiverCandidate || receiverWarehouseCandidate;
-    if (registrationMode === 'loading' && receiverDestinationCandidate?.name) {
+    if (registrationMode === 'loading' && receiverWarehouseCandidate?.name) {
       extractedData.receiverEntity = receiverDestinationCandidate.name;
     }
 
@@ -1771,7 +1777,7 @@ exports.saveUnloadingRecord = async (req, res) => {
 
     if (registrationMode === 'loading' && !isLoadingWarehouseAllowed(warehouse.name || '')) {
       return res.status(400).json({
-        message: 'مستودع التحميل يجب أن يكون شركة الشبكة الذهبية أو مصفى النفط الذهبي',
+        message: 'Loading document issuer must be Golden Oil Refinery.',
       });
     }
 
@@ -1832,18 +1838,18 @@ exports.saveUnloadingRecord = async (req, res) => {
       options: { forSave: true },
     });
 
-    if (registrationMode === 'loading' && receiverDestinationCandidate?.name) {
+    if (registrationMode === 'loading' && receiverWarehouseCandidate?.name) {
       strictEvaluation.strictChecks = {
         ...strictEvaluation.strictChecks,
         receiverEntity: {
           field: 'receiverEntity',
           status: 'confirmed',
-          value: receiverDestinationCandidate.name,
-          normalizedValue: receiverDestinationCandidate.name,
+          value: receiverWarehouseCandidate.name,
+          normalizedValue: receiverWarehouseCandidate.name,
           reasonCodes: [],
           ocrConfidence: 1,
           topCandidates: [],
-          matchedId: receiverDestinationCandidate._id || null,
+          matchedId: receiverWarehouseCandidate._id || null,
         },
       };
     }

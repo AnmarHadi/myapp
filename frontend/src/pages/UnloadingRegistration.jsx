@@ -400,6 +400,7 @@ const emptyForm = {
 
 export default function UnloadingRegistration({ registrationMode = 'unloading' } = {}) {
   const isLoadingMode = registrationMode === 'loading'
+  const manualLoadingEntryOnly = isLoadingMode
   const apiBase = isLoadingMode ? '/api/loading-records' : '/api/unloading-records'
   const pageTitle = isLoadingMode ? 'تسجيل التحميل' : 'تسجيل التفريغ'
   const pageKicker = isLoadingMode ? '🧾 تسجيل التحميل' : '🧾 تسجيل التفريغ'
@@ -608,6 +609,11 @@ const isReceiverEntityInLoadingDb = (value = '') => {
   }
 
   const handleExtract = async (options = {}) => {
+    if (manualLoadingEntryOnly) {
+      setApiError('Loading document extraction is disabled. Manual entry only.')
+      return
+    }
+
     if (!image) {
       setApiError('يرجى اختيار صورة المستند أولاً')
       return
@@ -775,7 +781,7 @@ const isReceiverEntityInLoadingDb = (value = '') => {
       ? 'مستودع التحميل غير مطابق لقاعدة البيانات'
       : 'الجهة المجهزة غير مطابقة لقاعدة البيانات'
     if (isLoadingMode && !isAllowedLoadingWarehouse(form.loadingWarehouseName)) {
-      return 'مستودع التحميل يجب أن يكون شركة الشبكة الذهبية أو مصفى النفط الذهبي'
+      return 'Loading document issuer must be Golden Oil Refinery.'
     }
     if (!form.receiverEntity) return 'الجهة المرسل إليها مطلوبة'
     if (!form.vehicleId) return 'المركبة غير مطابقة لقاعدة البيانات'
@@ -979,6 +985,7 @@ const isReceiverEntityInLoadingDb = (value = '') => {
         </div>
       </div>
 
+      {!manualLoadingEntryOnly && (
       <div className="pricing-card pricing-card-upload">
         <div className="pricing-card-header">
           <div>
@@ -1043,6 +1050,7 @@ const isReceiverEntityInLoadingDb = (value = '') => {
           </div>
         )}
       </div>
+      )}
 
       <div className="pricing-card pricing-card-data">
         <div className="pricing-card-header">
@@ -1302,7 +1310,7 @@ const isReceiverEntityInLoadingDb = (value = '') => {
         </div>
       )}
 
-      {extractionModeLabel && (
+      {!manualLoadingEntryOnly && extractionModeLabel && (
         <div className="pricing-status-strip" style={{ marginBottom: 18 }}>
           <strong>محرك الاستخراج:</strong> {extractionModeLabel}
           {form.visionReview?.model ? ` | الموديل: ${form.visionReview.model}` : ''}
