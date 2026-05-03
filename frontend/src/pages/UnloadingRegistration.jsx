@@ -610,7 +610,7 @@ const isReceiverEntityInLoadingDb = (value = '') => {
 
   const handleExtract = async (options = {}) => {
     if (manualLoadingEntryOnly) {
-      setApiError('Loading document extraction is disabled. Manual entry only.')
+      setApiError('تم تعطيل قراءة مستندات التحميل. الإدخال يدوي فقط.')
       return
     }
 
@@ -781,7 +781,7 @@ const isReceiverEntityInLoadingDb = (value = '') => {
       ? 'مستودع التحميل غير مطابق لقاعدة البيانات'
       : 'الجهة المجهزة غير مطابقة لقاعدة البيانات'
     if (isLoadingMode && !isAllowedLoadingWarehouse(form.loadingWarehouseName)) {
-      return 'Loading document issuer must be Golden Oil Refinery.'
+      return 'جهة إصدار مستند التحميل يجب أن تكون مصفاة النفط الذهبي.'
     }
     if (!form.receiverEntity) return 'الجهة المرسل إليها مطلوبة'
     if (!form.vehicleId) return 'المركبة غير مطابقة لقاعدة البيانات'

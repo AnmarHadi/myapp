@@ -1244,7 +1244,7 @@ exports.extractUnloadingRecordFromImage = async (req, res) => {
     if (registrationMode === 'loading') {
       return res.status(400).json({
         success: false,
-        message: 'Loading document extraction is disabled. Manual entry only.',
+        message: 'تم تعطيل قراءة مستندات التحميل. الإدخال يدوي فقط.',
       });
     }
     const requestedOcrMode = typeof req.body?.ocrMode === 'string' ? req.body.ocrMode.trim() : '';
@@ -1777,7 +1777,7 @@ exports.saveUnloadingRecord = async (req, res) => {
 
     if (registrationMode === 'loading' && !isLoadingWarehouseAllowed(warehouse.name || '')) {
       return res.status(400).json({
-        message: 'Loading document issuer must be Golden Oil Refinery.',
+        message: 'جهة إصدار مستند التحميل يجب أن تكون مصفاة النفط الذهبي.',
       });
     }
 
